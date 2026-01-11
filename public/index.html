@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calorie Tracker</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 20px; }
+        .google-status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .google-status.disconnected {
+            background: #fff3cd;
+        }
+        .google-status.connected {
+            background: #d4edda;
+        }
+        .google-status button {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+        .google-status .disconnect-btn {
+            background: #dc3545;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+        }
+        .result {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .result.show { display: block; }
+        .nutrition {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .nutrition div {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .nutrition .value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .nutrition .label {
+            font-size: 12px;
+            color: #666;
+        }
+        .log { margin-top: 30px; }
+        .log-entry {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-entry .logged {
+            color: #28a745;
+            font-size: 12px;
+        }
+        .log-entry .not-logged {
+            color: #999;
+            font-size: 12px;
+        }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Calorie Tracker</h1>
+
+    <div id="google-status" class="google-status disconnected">
+        <span id="status-text">Google Sheets: Not connected</span>
+        <button id="connect-btn" onclick="window.location.href='/auth/google'">Connect Google Sheets</button>
+    </div>
+
+    <div class="input-group">
+        <input type="text" id="food" placeholder="Enter food (e.g., 'chicken breast 6oz' or 'bowl of pasta')" autofocus>
+        <button id="submit">Track</button>
+    </div>
+
+    <div id="result" class="result">
+        <strong id="food-name"></strong>
+        <div class="nutrition">
+            <div>
+                <div class="value" id="calories">-</div>
+                <div class="label">Calories</div>
+            </div>
+            <div>
+                <div class="value" id="protein">-</div>
+                <div class="label">Protein (g)</div>
+            </div>
+            <div>
+                <div class="value" id="carbs">-</div>
+                <div class="label">Carbs (g)</div>
+            </div>
+            <div>
+                <div class="value" id="fat">-</div>
+                <div class="label">Fat (g)</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="log">
+        <h3>Today's Log</h3>
+        <div id="log-entries"></div>
+    </div>
+
+    <script>
+        const foodInput = document.getElementById('food');
+        const submitBtn = document.getElementById('submit');
+        const resultDiv = document.getElementById('result');
+        const logEntries = document.getElementById('log-entries');
+        const googleStatus = document.getElementById('google-status');
+        const statusText = document.getElementById('status-text');
+        const connectBtn = document.getElementById('connect-btn');
+
+        let todayLog = [];
+        let isGoogleConnected = false;
+
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch('/auth/status');
+                const data = await response.json();
+                isGoogleConnected = data.authenticated;
+                updateGoogleStatus();
+            } catch (error) {
+                console.error('Error checking auth status:', error);
+            }
+        }
+
+        function updateGoogleStatus() {
+            if (isGoogleConnected) {
+                googleStatus.className = 'google-status connected';
+                statusText.textContent = 'Google Sheets: Connected';
+                connectBtn.textContent = 'Disconnect';
+                connectBtn.className = 'disconnect-btn';
+                connectBtn.onclick = disconnect;
+            } else {
+                googleStatus.className = 'google-status disconnected';
+                statusText.textContent = 'Google Sheets: Not connected';
+                connectBtn.textContent = 'Connect Google Sheets';
+                connectBtn.className = '';
+                connectBtn.onclick = () => window.location.href = '/auth/google';
+            }
+        }
+
+        async function disconnect() {
+            try {
+                await fetch('/auth/disconnect', { method: 'POST' });
+                isGoogleConnected = false;
+                updateGoogleStatus();
+            } catch (error) {
+                console.error('Error disconnecting:', error);
+            }
+        }
+
+        async function trackFood() {
+            const food = foodInput.value.trim();
+            if (!food) return;
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Analyzing...';
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ food })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                document.getElementById('food-name').textContent = data.food;
+                document.getElementById('calories').textContent = data.calories;
+                document.getElementById('protein').textContent = data.protein;
+                document.getElementById('carbs').textContent = data.carbs;
+                document.getElementById('fat').textContent = data.fat;
+                resultDiv.classList.add('show');
+
+                todayLog.unshift(data);
+                updateLog();
+
+                foodInput.value = '';
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Track';
+            }
+        }
+
+        function updateLog() {
+            logEntries.innerHTML = todayLog.map(entry => `
+                <div class="log-entry">
+                    <strong>${entry.food}</strong>:
+                    ${entry.calories} cal,
+                    ${entry.protein}g protein,
+                    ${entry.carbs}g carbs,
+                    ${entry.fat}g fat
+                    ${entry.logged ? '<span class="logged">(saved to Sheets)</span>' : '<span class="not-logged">(not saved)</span>'}
+                </div>
+            `).join('');
+        }
+
+        submitBtn.addEventListener('click', trackFood);
+        foodInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') trackFood();
+        });
+
+        // Check auth status on page load
+        checkAuthStatus();
+    </script>
+</body>
+</html>
