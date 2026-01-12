@@ -9,17 +9,28 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const anthropic = new Anthropic();
 
 // OAuth 2.0 setup
 const TOKEN_PATH = path.join(__dirname, 'tokens.json');
 
+// Dynamic callback URL for deployed environments
+const getCallbackUrl = () => {
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/auth/google/callback`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/auth/google/callback`;
+  }
+  return `http://localhost:${port}/auth/google/callback`;
+};
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  `http://localhost:${port}/auth/google/callback`
+  getCallbackUrl()
 );
 
 // Load saved tokens if they exist
