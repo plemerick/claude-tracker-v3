@@ -812,7 +812,7 @@
                 <div class="progress-card calories">
                     <div class="progress-header">
                         <span class="label">Calories</span>
-                        <span class="values"><span class="current" id="progress-cal-current">0</span><span class="target"> / <span id="progress-cal-target">2000</span></span></span>
+                        <span class="values"><span class="current" id="progress-cal-current">0</span><span class="target"> / <span id="progress-cal-target">1800</span></span></span>
                     </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="progress-cal-fill" style="width: 0%"></div>
@@ -822,7 +822,7 @@
                 <div class="progress-card protein">
                     <div class="progress-header">
                         <span class="label">Protein</span>
-                        <span class="values"><span class="current" id="progress-pro-current">0</span>g<span class="target"> / <span id="progress-pro-target">150</span>g</span></span>
+                        <span class="values"><span class="current" id="progress-pro-current">0</span>g<span class="target"> / <span id="progress-pro-target">180</span>g</span></span>
                     </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="progress-pro-fill" style="width: 0%"></div>
@@ -832,7 +832,7 @@
                 <div class="progress-card carbs">
                     <div class="progress-header">
                         <span class="label">Carbs</span>
-                        <span class="values"><span class="current" id="progress-carb-current">0</span>g<span class="target"> / <span id="progress-carb-target">250</span>g</span></span>
+                        <span class="values"><span class="current" id="progress-carb-current">0</span>g<span class="target"> / <span id="progress-carb-target">115</span>g</span></span>
                     </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="progress-carb-fill" style="width: 0%"></div>
@@ -1085,7 +1085,7 @@
         let currentImage = null;
 
         // Default targets
-        const defaultTargets = { calories: 2000, protein: 150, carbs: 250, fat: 65 };
+        const defaultTargets = { calories: 1800, protein: 180, carbs: 115, fat: 65 };
         let targets = JSON.parse(localStorage.getItem('calorieTargets')) || { ...defaultTargets };
 
         // Set default date to today
