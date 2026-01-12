@@ -8,7 +8,7 @@ const { google } = require('googleapis');
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
 const anthropic = new Anthropic();
@@ -101,10 +101,43 @@ app.post('/auth/disconnect', (req, res) => {
 
 app.post('/analyze', async (req, res) => {
   try {
-    const { food } = req.body;
+    const { food, date: selectedDate, image } = req.body;
 
-    if (!food) {
-      return res.status(400).json({ error: 'Food description is required' });
+    if (!food && !image) {
+      return res.status(400).json({ error: 'Food description or image is required' });
+    }
+
+    let messageContent;
+
+    if (image) {
+      // Image analysis with vision
+      const imageData = image.replace(/^data:image\/\w+;base64,/, '');
+      const mediaType = image.match(/^data:(image\/\w+);base64,/)?.[1] || 'image/jpeg';
+
+      messageContent = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mediaType,
+            data: imageData
+          }
+        },
+        {
+          type: 'text',
+          text: `Analyze this food image or nutrition label and estimate the nutritional content. If it's a nutrition label, extract the values. If it's food, estimate based on what you see.${food ? ` Additional context: ${food}` : ''}
+
+Respond in this exact JSON format only, no other text:
+{"food": "<brief description of the food>", "calories": <number>, "protein": <number in grams>, "carbs": <number in grams>, "fat": <number in grams>}`
+        }
+      ];
+    } else {
+      messageContent = `Analyze this food and estimate its nutritional content. Be concise and give your best estimate.
+
+Food: ${food}
+
+Respond in this exact JSON format only, no other text:
+{"calories": <number>, "protein": <number in grams>, "carbs": <number in grams>, "fat": <number in grams>}`;
     }
 
     const message = await anthropic.messages.create({
@@ -113,12 +146,7 @@ app.post('/analyze', async (req, res) => {
       messages: [
         {
           role: 'user',
-          content: `Analyze this food and estimate its nutritional content. Be concise and give your best estimate.
-
-Food: ${food}
-
-Respond in this exact JSON format only, no other text:
-{"calories": <number>, "protein": <number in grams>, "carbs": <number in grams>, "fat": <number in grams>}`
+          content: messageContent
         }
       ]
     });
@@ -127,10 +155,40 @@ Respond in this exact JSON format only, no other text:
     const nutrition = JSON.parse(responseText);
 
     const now = new Date();
-    const date = now.toLocaleDateString('en-US');
+    const date = selectedDate || now.toLocaleDateString('en-US');
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
+    // Use food name from image analysis or from request
+    const foodName = nutrition.food || food;
+
+    res.json({
+      food: foodName,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+      carbs: nutrition.carbs,
+      fat: nutrition.fat,
+      date,
+      time,
+      logged: false // Don't log until confirmed
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Confirm and save an entry to Google Sheets
+app.post('/confirm', async (req, res) => {
+  try {
+    const { food, calories, protein, carbs, fat, date, time } = req.body;
+
+    if (!food) {
+      return res.status(400).json({ error: 'Food description is required' });
+    }
+
     let logged = false;
+    let rowIndex = null;
 
     if (process.env.GOOGLE_SHEETS_ID && oauth2Client.credentials?.access_token) {
       try {
@@ -139,10 +197,17 @@ Respond in this exact JSON format only, no other text:
           range: 'Sheet1!A:G',
           valueInputOption: 'USER_ENTERED',
           requestBody: {
-            values: [[date, time, food, nutrition.calories, nutrition.protein, nutrition.carbs, nutrition.fat]]
+            values: [[date, time, food, calories, protein, carbs, fat]]
           }
         });
         logged = true;
+
+        // Get the row index of the newly added entry
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+          range: 'Sheet1!A:A',
+        });
+        rowIndex = (response.data.values?.length || 1) - 2; // -1 for 0-based, -1 for header
       } catch (sheetError) {
         console.error('Error logging to sheets:', sheetError.message);
       }
@@ -150,12 +215,218 @@ Respond in this exact JSON format only, no other text:
 
     res.json({
       food,
-      ...nutrition,
-      logged
+      calories,
+      protein,
+      carbs,
+      fat,
+      date,
+      time,
+      logged,
+      rowIndex
     });
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error confirming entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get summary for a time period
+app.get('/summary', async (req, res) => {
+  try {
+    const { period } = req.query; // daily, weekly, monthly
+
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.json({ error: 'Not authenticated', authenticated: false });
+    }
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: 'Sheet1!A:G',
+    });
+
+    const rows = response.data.values || [];
+    const now = new Date();
+
+    // Calculate date range based on period
+    let startDate;
+    if (period === 'daily') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (period === 'weekly') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    } else if (period === 'monthly') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
+    // Filter and sum entries
+    let totalCalories = 0, totalProtein = 0, totalCarbs = 0, totalFat = 0;
+    let entryCount = 0;
+    const dailyTotals = {};
+
+    rows.forEach((row, index) => {
+      // Skip header row
+      if (index === 0 && row[0]?.toLowerCase() === 'date') return;
+
+      // Parse date from row (format: M/D/YYYY)
+      const rowDate = new Date(row[0]);
+      if (isNaN(rowDate.getTime())) return;
+
+      if (rowDate >= startDate && rowDate <= now) {
+        const calories = parseInt(row[3]) || 0;
+        const protein = parseInt(row[4]) || 0;
+        const carbs = parseInt(row[5]) || 0;
+        const fat = parseInt(row[6]) || 0;
+
+        totalCalories += calories;
+        totalProtein += protein;
+        totalCarbs += carbs;
+        totalFat += fat;
+        entryCount++;
+
+        // Track daily totals for averages
+        const dateKey = row[0];
+        if (!dailyTotals[dateKey]) {
+          dailyTotals[dateKey] = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+        }
+        dailyTotals[dateKey].calories += calories;
+        dailyTotals[dateKey].protein += protein;
+        dailyTotals[dateKey].carbs += carbs;
+        dailyTotals[dateKey].fat += fat;
+      }
+    });
+
+    const daysCount = Object.keys(dailyTotals).length || 1;
+
+    res.json({
+      period,
+      totalCalories,
+      totalProtein,
+      totalCarbs,
+      totalFat,
+      entryCount,
+      daysCount,
+      avgCalories: Math.round(totalCalories / daysCount),
+      avgProtein: Math.round(totalProtein / daysCount),
+      avgCarbs: Math.round(totalCarbs / daysCount),
+      avgFat: Math.round(totalFat / daysCount),
+      authenticated: true
+    });
+
+  } catch (error) {
+    console.error('Error fetching summary:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get entries for a specific date
+app.get('/entries', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.json({ entries: [], authenticated: false });
+    }
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: 'Sheet1!A:G',
+    });
+
+    const rows = response.data.values || [];
+
+    // Filter rows by date (skip header row if present)
+    const hasHeader = rows[0]?.[0]?.toLowerCase() === 'date';
+    const entries = rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row, index }) => {
+        // Skip header row
+        if (index === 0 && hasHeader) return false;
+        // Match date
+        return row[0] === date;
+      })
+      .map(({ row, index }) => ({
+        rowIndex: hasHeader ? index - 1 : index, // Adjust for header
+        date: row[0],
+        time: row[1],
+        food: row[2],
+        calories: parseInt(row[3]) || 0,
+        protein: parseInt(row[4]) || 0,
+        carbs: parseInt(row[5]) || 0,
+        fat: parseInt(row[6]) || 0,
+        logged: true
+      }));
+
+    res.json({ entries, authenticated: true });
+
+  } catch (error) {
+    console.error('Error fetching entries:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete an entry by row index
+app.delete('/entries/:rowIndex', async (req, res) => {
+  try {
+    const { rowIndex } = req.params;
+
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    // Delete the row (rowIndex is 0-based from data, add 1 for sheet, add 1 more if header exists)
+    const sheetRowIndex = parseInt(rowIndex) + 2; // +1 for 1-based, +1 for header row
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId: 0,
+              dimension: 'ROWS',
+              startIndex: sheetRowIndex - 1,
+              endIndex: sheetRowIndex
+            }
+          }
+        }]
+      }
+    });
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Error deleting entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update an entry
+app.put('/entries/:rowIndex', async (req, res) => {
+  try {
+    const { rowIndex } = req.params;
+    const { calories, protein, carbs, fat } = req.body;
+
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const sheetRowIndex = parseInt(rowIndex) + 2; // +1 for 1-based, +1 for header row
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: `Sheet1!D${sheetRowIndex}:G${sheetRowIndex}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[calories, protein, carbs, fat]]
+      }
+    });
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Error updating entry:', error);
     res.status(500).json({ error: error.message });
   }
 });
