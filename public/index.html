@@ -1297,16 +1297,48 @@
             document.getElementById('targets-modal').classList.remove('show');
         }
 
-        function saveTargets() {
+        async function saveTargets() {
             targets.calories = parseInt(document.getElementById('target-calories').value) || defaultTargets.calories;
             targets.protein = parseInt(document.getElementById('target-protein').value) || defaultTargets.protein;
             targets.carbs = parseInt(document.getElementById('target-carbs').value) || defaultTargets.carbs;
             targets.fat = parseInt(document.getElementById('target-fat').value) || defaultTargets.fat;
 
+            // Save to localStorage as fallback
             localStorage.setItem('calorieTargets', JSON.stringify(targets));
+
+            // Save to Google Sheets if connected
+            if (isGoogleConnected) {
+                try {
+                    await fetch('/settings/targets', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(targets)
+                    });
+                } catch (error) {
+                    console.error('Error saving targets to server:', error);
+                }
+            }
+
             initTargets();
             updateProgress();
             closeTargetsModal();
+        }
+
+        async function loadTargetsFromServer() {
+            if (!isGoogleConnected) return;
+
+            try {
+                const response = await fetch('/settings/targets');
+                if (response.ok) {
+                    const serverTargets = await response.json();
+                    targets = serverTargets;
+                    localStorage.setItem('calorieTargets', JSON.stringify(targets));
+                    initTargets();
+                    updateProgress();
+                }
+            } catch (error) {
+                console.error('Error loading targets from server:', error);
+            }
         }
 
         function updateProgress() {
@@ -1428,6 +1460,11 @@
                 const data = await response.json();
                 isGoogleConnected = data.authenticated;
                 updateGoogleStatus();
+
+                // Load targets from server when connected
+                if (isGoogleConnected) {
+                    loadTargetsFromServer();
+                }
             } catch (error) {
                 console.error('Error checking auth status:', error);
             }

@@ -442,6 +442,107 @@ app.put('/entries/:rowIndex', async (req, res) => {
   }
 });
 
+// Get targets from Google Sheets
+app.get('/settings/targets', async (req, res) => {
+  try {
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+    // Try to read from Settings sheet
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: 'Settings!A2:D2'
+      });
+
+      if (response.data.values && response.data.values[0]) {
+        const [calories, protein, carbs, fat] = response.data.values[0];
+        res.json({
+          calories: parseInt(calories) || 1800,
+          protein: parseInt(protein) || 180,
+          carbs: parseInt(carbs) || 115,
+          fat: parseInt(fat) || 65
+        });
+      } else {
+        // Return defaults if no data
+        res.json({ calories: 1800, protein: 180, carbs: 115, fat: 65 });
+      }
+    } catch (err) {
+      // Settings sheet might not exist, return defaults
+      res.json({ calories: 1800, protein: 180, carbs: 115, fat: 65 });
+    }
+
+  } catch (error) {
+    console.error('Error getting targets:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save targets to Google Sheets
+app.put('/settings/targets', async (req, res) => {
+  try {
+    const { calories, protein, carbs, fat } = req.body;
+
+    if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+    // Check if Settings sheet exists, create if not
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID
+    });
+
+    const settingsSheet = spreadsheet.data.sheets.find(
+      sheet => sheet.properties.title === 'Settings'
+    );
+
+    if (!settingsSheet) {
+      // Create Settings sheet
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        requestBody: {
+          requests: [{
+            addSheet: {
+              properties: { title: 'Settings' }
+            }
+          }]
+        }
+      });
+
+      // Add header row
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: 'Settings!A1:D1',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [['Calories', 'Protein', 'Carbs', 'Fat']]
+        }
+      });
+    }
+
+    // Save targets
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: 'Settings!A2:D2',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[calories, protein, carbs, fat]]
+      }
+    });
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Error saving targets:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Calorie tracker running at http://localhost:${port}`);
 });
