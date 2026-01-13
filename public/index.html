@@ -756,7 +756,101 @@
             display: none;
         }
 
+        /* Mobile card view for food log */
+        .log-cards {
+            display: none;
+        }
+
+        .log-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .log-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }
+
+        .log-card-food {
+            font-weight: 500;
+            color: var(--text-primary);
+            flex: 1;
+            margin-right: 0.5rem;
+        }
+
+        .log-card-time {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .log-card-macros {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .log-card-macro {
+            text-align: center;
+            padding: 0.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+        }
+
+        .log-card-macro-value {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .log-card-macro-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .log-card-macro.cal .log-card-macro-value { color: var(--green); }
+        .log-card-macro.pro .log-card-macro-value { color: var(--blue); }
+        .log-card-macro.carb .log-card-macro-value { color: var(--orange); }
+        .log-card-macro.fat .log-card-macro-value { color: var(--purple); }
+
+        .log-card-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        /* Collapsible image upload toggle */
+        .upload-toggle {
+            display: none;
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            cursor: pointer;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .upload-toggle:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        /* Scroll performance */
+        .container {
+            -webkit-overflow-scrolling: touch;
+        }
+
         @media (max-width: 600px) {
+            /* 2x2 grid for macro cards */
             .nutrition-grid,
             .summary-grid,
             .progress-grid {
@@ -779,16 +873,83 @@
                 width: 100%;
             }
 
+            /* Hide table, show cards on mobile */
             .log-table {
-                font-size: 0.875rem;
+                display: none !important;
+            }
+
+            .log-cards {
+                display: block;
+            }
+
+            /* Show upload toggle on mobile */
+            .upload-toggle {
+                display: block;
+            }
+
+            .image-upload-section.collapsed {
+                display: none;
+            }
+
+            /* Touch-friendly spacing (44x44px minimum) */
+            .btn, button {
+                min-height: 44px;
+                min-width: 44px;
+                padding: 0.75rem 1rem;
+            }
+
+            .btn-icon {
+                min-height: 44px;
+                min-width: 44px;
+                font-size: 1.125rem;
             }
 
             .summary-buttons {
                 flex-wrap: wrap;
+                gap: 0.5rem;
             }
 
             .summary-buttons .btn {
                 flex: 1 1 30%;
+                min-height: 44px;
+            }
+
+            /* Better touch targets for inputs */
+            input[type="text"],
+            input[type="number"],
+            input[type="date"] {
+                min-height: 44px;
+                font-size: 16px; /* Prevents iOS zoom */
+            }
+
+            /* Scroll performance optimizations */
+            .card {
+                transform: translateZ(0);
+                will-change: transform;
+            }
+
+            .log-cards {
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            /* Compact card layout */
+            .log-card-macros {
+                grid-template-columns: repeat(4, 1fr);
+            }
+
+            /* Modal touch-friendly */
+            .modal {
+                max-height: 90vh;
+                overflow-y: auto;
+            }
+
+            .modal-grid {
+                gap: 0.75rem;
+            }
+
+            .modal-field input {
+                min-height: 44px;
             }
         }
     </style>
@@ -868,7 +1029,10 @@
                     </div>
                 </div>
 
-                <div class="image-upload-section">
+                <button class="upload-toggle" id="upload-toggle" onclick="toggleUpload()">
+                    &#128247; Add photo (optional)
+                </button>
+                <div class="image-upload-section" id="image-upload-section">
                     <label class="image-upload-label">Or upload a photo of your food or nutrition label</label>
                     <input type="file" id="image-input" class="image-input" accept="image/*">
                     <div class="image-drop-zone" id="drop-zone">
@@ -967,6 +1131,7 @@
                     <tbody id="log-entries">
                     </tbody>
                 </table>
+                <div class="log-cards" id="log-cards"></div>
             </div>
         </div>
     </div>
@@ -1079,8 +1244,29 @@
         const imagePreview = document.getElementById('image-preview');
         const previewContainer = document.getElementById('preview-container');
         const dropZoneText = document.getElementById('drop-zone-text');
+        const logCards = document.getElementById('log-cards');
+        const imageUploadSection = document.getElementById('image-upload-section');
+        const uploadToggle = document.getElementById('upload-toggle');
 
         let todayLog = [];
+        let uploadCollapsed = true;
+
+        // Toggle image upload section on mobile
+        function toggleUpload() {
+            uploadCollapsed = !uploadCollapsed;
+            if (uploadCollapsed) {
+                imageUploadSection.classList.add('collapsed');
+                uploadToggle.innerHTML = '&#128247; Add photo (optional)';
+            } else {
+                imageUploadSection.classList.remove('collapsed');
+                uploadToggle.innerHTML = '&#128247; Hide photo upload';
+            }
+        }
+
+        // Start collapsed on mobile
+        if (window.innerWidth <= 600) {
+            imageUploadSection.classList.add('collapsed');
+        }
         let isGoogleConnected = false;
         let currentImage = null;
 
@@ -1389,9 +1575,12 @@
             if (todayLog.length === 0) {
                 emptyState.style.display = 'block';
                 logTable.style.display = 'none';
+                logCards.innerHTML = '';
             } else {
                 emptyState.style.display = 'none';
                 logTable.style.display = 'table';
+
+                // Table view (desktop)
                 logEntries.innerHTML = todayLog.map((entry, idx) => `
                     <tr>
                         <td>${entry.time || 'Just now'}</td>
@@ -1405,6 +1594,38 @@
                             <button class="btn-icon delete" onclick="deleteEntry(${idx})" title="Delete">&#10005;</button>
                         </td>
                     </tr>
+                `).join('');
+
+                // Card view (mobile)
+                logCards.innerHTML = todayLog.map((entry, idx) => `
+                    <div class="log-card">
+                        <div class="log-card-header">
+                            <div class="log-card-food">${entry.food}</div>
+                            <div class="log-card-time">${entry.time || 'Just now'}</div>
+                        </div>
+                        <div class="log-card-macros">
+                            <div class="log-card-macro cal">
+                                <div class="log-card-macro-value">${entry.calories}</div>
+                                <div class="log-card-macro-label">Cal</div>
+                            </div>
+                            <div class="log-card-macro pro">
+                                <div class="log-card-macro-value">${entry.protein}g</div>
+                                <div class="log-card-macro-label">Pro</div>
+                            </div>
+                            <div class="log-card-macro carb">
+                                <div class="log-card-macro-value">${entry.carbs}g</div>
+                                <div class="log-card-macro-label">Carb</div>
+                            </div>
+                            <div class="log-card-macro fat">
+                                <div class="log-card-macro-value">${entry.fat}g</div>
+                                <div class="log-card-macro-label">Fat</div>
+                            </div>
+                        </div>
+                        <div class="log-card-actions">
+                            <button class="btn-icon edit" onclick="openEditModal(${idx})" title="Edit">&#9998;</button>
+                            <button class="btn-icon delete" onclick="deleteEntry(${idx})" title="Delete">&#10005;</button>
+                        </div>
+                    </div>
                 `).join('');
             }
         }
