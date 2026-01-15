@@ -1275,6 +1275,9 @@
         const defaultTargets = { calories: 1800, protein: 180, carbs: 115, fat: 65 };
         let targets = JSON.parse(localStorage.getItem('calorieTargets')) || { ...defaultTargets };
 
+        // Get client timezone
+        const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
         // Set default date to today
         dateInput.value = new Date().toISOString().split('T')[0];
 
@@ -1510,7 +1513,7 @@
             submitBtn.textContent = currentImage ? 'Analyzing image...' : 'Analyzing...';
 
             try {
-                const requestBody = { date: formattedDate };
+                const requestBody = { date: formattedDate, timezone: clientTimezone };
                 if (food) requestBody.food = food;
                 if (currentImage) requestBody.image = currentImage;
 
@@ -1761,7 +1764,7 @@
             document.getElementById(`btn-${period}`).classList.add('active');
 
             try {
-                const response = await fetch(`/summary?period=${period}`);
+                const response = await fetch(`/summary?period=${period}&timezone=${encodeURIComponent(clientTimezone)}`);
                 const data = await response.json();
 
                 if (data.error) {

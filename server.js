@@ -112,11 +112,14 @@ app.post('/auth/disconnect', (req, res) => {
 
 app.post('/analyze', async (req, res) => {
   try {
-    const { food, date: selectedDate, image } = req.body;
+    const { food, date: selectedDate, image, timezone } = req.body;
 
     if (!food && !image) {
       return res.status(400).json({ error: 'Food description or image is required' });
     }
+
+    // Use client timezone or fall back to UTC
+    const tz = timezone || 'UTC';
 
     let messageContent;
 
@@ -166,8 +169,8 @@ Respond in this exact JSON format only, no other text:
     const nutrition = JSON.parse(responseText);
 
     const now = new Date();
-    const date = selectedDate || now.toLocaleDateString('en-US');
-    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const date = selectedDate || now.toLocaleDateString('en-US', { timeZone: tz });
+    const time = now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
 
     // Use food name from image analysis or from request
     const foodName = nutrition.food || food;
@@ -245,7 +248,8 @@ app.post('/confirm', async (req, res) => {
 // Get summary for a time period
 app.get('/summary', async (req, res) => {
   try {
-    const { period } = req.query; // daily, weekly, monthly
+    const { period, timezone } = req.query; // daily, weekly, monthly
+    const tz = timezone || 'UTC';
 
     if (!process.env.GOOGLE_SHEETS_ID || !oauth2Client.credentials?.access_token) {
       return res.json({ error: 'Not authenticated', authenticated: false });
@@ -257,18 +261,21 @@ app.get('/summary', async (req, res) => {
     });
 
     const rows = response.data.values || [];
-    const now = new Date();
 
-    // Calculate date range based on period
+    // Get current time in client's timezone
+    const now = new Date();
+    const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+
+    // Calculate date range based on period (using client timezone)
     let startDate;
     if (period === 'daily') {
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      startDate = new Date(nowInTz.getFullYear(), nowInTz.getMonth(), nowInTz.getDate());
     } else if (period === 'weekly') {
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+      startDate = new Date(nowInTz.getFullYear(), nowInTz.getMonth(), nowInTz.getDate() - 7);
     } else if (period === 'monthly') {
-      startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+      startDate = new Date(nowInTz.getFullYear(), nowInTz.getMonth() - 1, nowInTz.getDate());
     } else {
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      startDate = new Date(nowInTz.getFullYear(), nowInTz.getMonth(), nowInTz.getDate());
     }
 
     // Filter and sum entries
@@ -284,7 +291,7 @@ app.get('/summary', async (req, res) => {
       const rowDate = new Date(row[0]);
       if (isNaN(rowDate.getTime())) return;
 
-      if (rowDate >= startDate && rowDate <= now) {
+      if (rowDate >= startDate && rowDate <= nowInTz) {
         const calories = parseInt(row[3]) || 0;
         const protein = parseInt(row[4]) || 0;
         const carbs = parseInt(row[5]) || 0;
