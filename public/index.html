@@ -1346,11 +1346,8 @@
         }
 
         function updateProgress() {
-            // Calculate today's totals from log
-            const todayDate = new Date().toLocaleDateString('en-US');
-            const todayEntries = todayLog.filter(entry => entry.date === todayDate);
-
-            const totals = todayEntries.reduce((acc, entry) => {
+            // Calculate totals from the current log (which is already filtered by selected date)
+            const totals = todayLog.reduce((acc, entry) => {
                 acc.calories += entry.calories || 0;
                 acc.protein += entry.protein || 0;
                 acc.carbs += entry.carbs || 0;
